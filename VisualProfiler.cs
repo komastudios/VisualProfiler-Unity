@@ -57,8 +57,39 @@ namespace Microsoft.MixedReality.Profiling
                 frameSampleRateMS = frameSampleRate * 1000.0f;
             }
         }
+        
+        [SerializeField, Range(0, 0.1f)] private float frameRateTolerance = 0.03f;
 
+        public float FrameRateTolerance
+        {
+            get { return frameRateTolerance; }
+            set 
+            { 
+                frameRateTolerance = value;
+            }
+        }
+        
+        [SerializeField] private float frameRateTarget = 70.0f;
+        
+        public float FrameRateTarget
+        {
+            get { return frameRateTarget; }
+            set 
+            { 
+                frameRateTarget = value;
+            }
+        }
+
+        private bool useFrameRateTarget = false;
+
+        [Header("Camera Settings")]
+        [SerializeField]
+        private Transform overlayCamera;
+        
         [Header("Window Settings")]
+        [SerializeField]
+        private float windowDistance = 0.0f;
+        
         [SerializeField, Tooltip("What part of the view port to anchor the window to.")]
         private TextAnchor windowAnchor = TextAnchor.LowerCenter;
 
@@ -77,7 +108,7 @@ namespace Microsoft.MixedReality.Profiling
             set { windowOffset = value; }
         }
 
-        [SerializeField, Range(0.5f, 5.0f), Tooltip("Use to scale the window size up or down, can simulate a zooming effect.")]
+        [SerializeField, Range(0.5f, 20.0f), Tooltip("Use to scale the window size up or down, can simulate a zooming effect.")]
         private float windowScale = 1.0f;
 
         public float WindowScale
@@ -248,6 +279,8 @@ namespace Microsoft.MixedReality.Profiling
         private bool instanceBaseColorsDirty = false;
         private bool instanceUVOffsetScaleXDirty = false;
 
+        public string extraStats { get; set; } = string.Empty;
+
         /// <summary>
         /// Reset any stats the profiler is tracking. Call this if you would like to restart tracking 
         /// statistics like peak memory usage.
@@ -265,6 +298,10 @@ namespace Microsoft.MixedReality.Profiling
 
         private void OnEnable()
         {
+#if UNITY_ANDROID
+            useFrameRateTarget = !Application.isEditor;
+#endif
+            
             if (material == null)
             {
                 Debug.LogError("The VisualProfiler is missing a material and will not display.");
@@ -316,6 +353,11 @@ namespace Microsoft.MixedReality.Profiling
 
         private void OnValidate()
         {
+            if (Camera.main != null && windowDistance <= 0.0f)
+            {
+                windowDistance = Mathf.Max(16.0f / Camera.main.fieldOfView, Camera.main.nearClipPlane + 0.25f);
+            }
+            
             BuildWindow();
         }
 
@@ -324,7 +366,11 @@ namespace Microsoft.MixedReality.Profiling
             if (IsVisible)
             {
                 // Update window transformation.
-                Transform cameraTransform = Camera.main ? Camera.main.transform : null;
+                var cameraTransform = overlayCamera;
+                if (cameraTransform == null)
+                {
+                    cameraTransform = Camera.main ? Camera.main.transform : null;
+                }
 
                 if (cameraTransform != null)
                 {
@@ -372,7 +418,7 @@ namespace Microsoft.MixedReality.Profiling
                     lastGpuFrameRate = Mathf.Clamp(lastGpuFrameRate, 0, maxTargetFrameRate);
 
                     // TODO - [Cameron-Micka] Ideally we would query a device specific API (like the HolographicFramePresentationReport) to detect missed frames.
-                    bool missedFrame = lastCpuFrameRate < ((int)(AppFrameRate) - 1);
+                    bool missedFrame = lastCpuFrameRate < ((int)(AppTargetFrameRate) - 1);
                     Color frameColor = missedFrame ? missedFrameRateColor : targetFrameRateColor;
                     Vector4 frameIcon = missedFrame ? characterUVs['X'] : characterUVs[' '];
 
@@ -387,7 +433,7 @@ namespace Microsoft.MixedReality.Profiling
                     if (lastGpuFrameRate != gpuFrameRate)
                     {
                         char[] text = gpuFrameRateStrings[lastGpuFrameRate];
-                        Color color = (lastGpuFrameRate < ((int)(AppFrameRate) - 1)) ? missedFrameRateColor : targetFrameRateColor;
+                        Color color = (lastGpuFrameRate < ((int)(AppTargetFrameRate) - 1)) ? missedFrameRateColor : targetFrameRateColor;
                         SetText(gpuFrameRateText, text, text.Length, color);
                         gpuFrameRate = lastGpuFrameRate;
                     }
@@ -703,7 +749,6 @@ namespace Microsoft.MixedReality.Profiling
 
         private Vector3 CalculateWindowPosition(Transform cameraTransform)
         {
-            float windowDistance = Mathf.Max(16.0f / Camera.main.fieldOfView, Camera.main.nearClipPlane + 0.25f);
             Vector3 position = cameraTransform.position + (cameraTransform.forward * windowDistance);
             Vector3 horizontalOffset = cameraTransform.right * windowOffset.x;
             Vector3 verticalOffset = cameraTransform.up * windowOffset.y;
@@ -960,6 +1005,8 @@ namespace Microsoft.MixedReality.Profiling
                 return ((int)refreshRate == 0) ? 60.0f : refreshRate;
             }
         }
+
+        private float AppTargetFrameRate => useFrameRateTarget ? frameRateTarget : AppFrameRate * (1.0f - frameRateTolerance);
 
         private static ulong AppMemoryUsage
         {
